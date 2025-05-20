@@ -2,7 +2,7 @@ package com.developer.account.user.service;
 
 import com.developer.account.user.dto.LoginRequest;
 import com.developer.account.user.dto.RegisterRequest;
-import com.developer.account.user.dto.ResetPasswordRequest;
+import com.developer.account.user.dto.UserResponseDto;
 import com.developer.account.user.exception.EmailFailureException;
 import com.developer.account.user.exception.EmailNotFoundException;
 import com.developer.account.user.exception.UserAlreadyExistsException;
@@ -21,37 +21,70 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.Random;
+import java.util.stream.Collectors;
 
 @Service
 public class UserService {
 
     private static final Logger logger = LoggerFactory.getLogger(UserService.class);
 
-    @Autowired
-    private UserRepository userRepository;
+    private final UserRepository userRepository;
+    private final BCryptPasswordEncoder passwordEncoder;
+    private final EmailService emailService;
+    private final JWTService jwtService;
+    private final VerificationTokenRepository verificationTokenRepository;
+    private final PasswordResetTokenRepository passwordResetTokenRepository;
 
     @Autowired
-    private BCryptPasswordEncoder passwordEncoder;
+    public UserService(
+            UserRepository userRepository,
+            BCryptPasswordEncoder passwordEncoder,
+            EmailService emailService,
+            JWTService jwtService,
+            VerificationTokenRepository verificationTokenRepository,
+            PasswordResetTokenRepository passwordResetTokenRepository
+    ) {
+        this.userRepository = userRepository;
+        this.passwordEncoder = passwordEncoder;
+        this.emailService = emailService;
+        this.jwtService = jwtService;
+        this.verificationTokenRepository = verificationTokenRepository;
+        this.passwordResetTokenRepository = passwordResetTokenRepository;
+    }
 
-    @Autowired
-    private EmailService emailService;
+    // --- Admin Methods ---
+    public List<UserResponseDto> getAllUsersForAdmin() {
+        return userRepository.findAll()
+                .stream()
+                .map(user -> new UserResponseDto(
+                        user.getId(),
+                        user.getFirstName(),
+                        user.getSurname(),
+                        user.getEmail(),
+                        user.isEmailVerified()
+                ))
+                .collect(Collectors.toList());
+    }
 
-    @Autowired
-    private JWTService jwtService;
+    public Optional<UserResponseDto> getUserByIdForAdmin(Long id) {
+        return userRepository.findById(id)
+                .map(user -> new UserResponseDto(
+                        user.getId(),
+                        user.getFirstName(),
+                        user.getSurname(),
+                        user.getEmail(),
+                        user.isEmailVerified()
+                ));
+    }
 
-    @Autowired
-    private VerificationTokenRepository verificationTokenRepository;
-
-    @Autowired
-    private PasswordResetTokenRepository passwordResetTokenRepository;
-
+    // --- Public Methods ---
     public User registerUser(RegisterRequest request) throws UserAlreadyExistsException, EmailFailureException {
         logger.info("Attempting to register user with email: {}", request.getEmail());
 
         if (userRepository.findByEmailIgnoreCase(request.getEmail()).isPresent()) {
-            logger.warn("User registration attempt failed - user already exists: {}", request.getEmail());
             throw new UserAlreadyExistsException("User already exists with email: " + request.getEmail());
         }
 
@@ -63,42 +96,33 @@ public class UserService {
         user.setEmailVerified(false);
 
         user = userRepository.save(user);
-
         VerificationToken verificationToken = createVerificationToken(user);
-
-        try {
-            emailService.sendVerificationEmail(verificationToken);
-            logger.info("Verification email sent for user: {}", request.getEmail());
-        } catch (EmailFailureException e) {
-            logger.error("Failed to send verification email for user: {}", request.getEmail(), e);
-            throw e;
-        }
+        emailService.sendVerificationEmail(verificationToken);
 
         return user;
     }
 
+    // --- Private Helper Methods ---
     private VerificationToken createVerificationToken(User user) {
         VerificationToken token = new VerificationToken();
         token.setUser(user);
-
-        int code = 100000 + (int) (Math.random() * 900000);
-        token.setToken(String.valueOf(code));
-
-        token.generateTimestamps(1); // valid for 1 hour
+        token.setToken(generateSixDigitCode());
+        token.generateTimestamps(1); // 1 hour expiry
         return verificationTokenRepository.save(token);
     }
 
-    public PasswordResetToken createPasswordResetToken(User user) {
+    private PasswordResetToken createPasswordResetToken(User user) {
         PasswordResetToken token = new PasswordResetToken();
         token.setUser(user);
         token.setToken(generateSixDigitCode());
-        token.generateTimestamps(30); // expires in 30 minutes
+        token.generateTimestamps(30); // 30 minutes expiry
         return passwordResetTokenRepository.save(token);
     }
 
     private String generateSixDigitCode() {
         return String.format("%06d", new Random().nextInt(900000) + 100000);
     }
+
 
     public String loginUser(LoginRequest request) throws UserNotVerifiedException, EmailFailureException {
         logger.info("Login attempt for email: {}", request.getEmail());

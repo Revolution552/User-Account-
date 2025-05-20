@@ -5,6 +5,14 @@ import jakarta.persistence.*;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import lombok.*;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.userdetails.UserDetails;
+
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Entity
 @Getter
@@ -12,8 +20,8 @@ import lombok.*;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-@Table(name = "user")
-public class User {
+@Table(name = "users") // Changed from "user" as "user" is often a reserved keyword
+public class User implements UserDetails {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -39,14 +47,73 @@ public class User {
     private String password;
 
     @JsonIgnore
-    @Transient // Not stored in the DB
+    @Transient
     private String confirmPassword;
 
     @Column(name = "email_verified", nullable = false)
     private Boolean emailVerified = false;
 
-    public boolean isEmailVerified() {
+    @Column(name = "roles", nullable = false)
+    private String roles = "ROLE_USER"; // Default role
 
+    // ========== UserDetails Methods ==========
+    @Override
+    @JsonIgnore
+    public Collection<? extends GrantedAuthority> getAuthorities() {
+        if (roles == null || roles.isEmpty()) {
+            return Collections.emptySet();
+        }
+        return Set.of(roles.split(",")).stream()
+                .map(String::trim)
+                .map(SimpleGrantedAuthority::new)
+                .collect(Collectors.toSet());
+    }
+
+    @Override
+    @JsonIgnore
+    public String getUsername() {
+        return email;
+    }
+
+    @Override
+    @JsonIgnore
+    public boolean isAccountNonExpired() {
+        return true;
+    }
+
+    @Override
+    @JsonIgnore
+    public boolean isAccountNonLocked() {
+        return true;
+    }
+
+    @Override
+    @JsonIgnore
+    public boolean isCredentialsNonExpired() {
+        return true;
+    }
+
+    @Override
+    @JsonIgnore
+    public boolean isEnabled() {
         return emailVerified;
+    }
+
+    // Helper methods
+    public boolean hasRole(String role) {
+        return roles != null && roles.contains(role);
+    }
+
+    public void addRole(String role) {
+        if (roles == null || roles.isEmpty()) {
+            roles = role;
+        } else if (!hasRole(role)) {
+            roles += "," + role;
+        }
+    }
+
+    // Custom getter for emailVerified to maintain Lombok compatibility
+    public boolean isEmailVerified() {
+        return emailVerified != null && emailVerified;
     }
 }
